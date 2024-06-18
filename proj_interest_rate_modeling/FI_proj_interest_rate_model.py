@@ -4,19 +4,26 @@ import requests
 from scipy.interpolate import PchipInterpolator
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
+from matplotlib.backends.backend_pdf import PdfPages
 
 # FRED API endpoint and your API key
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 API_KEY = "3512f99492b0e9022667d242256548cb"
 output_dir = 'F:/FIC_project/output/'
+
 # Define the series IDs for different maturities
 series_ids = {
-    '0.25': 'DGS3MO',
+    '0.0833': 'DGS1MO',
+    '0.25': 'DGS3MO',      # 3-Month Treasury Constant Maturity Rate
     '0.5': 'DGS6MO',
-    '1': 'DGS1',
-    '5': 'DGS5',
-    '10': 'DGS10',
-    '30': 'DGS30'
+    '1': 'DGS1',           # 1-Year Treasury Constant Maturity Rate
+    '2': 'DGS2',
+    '3': 'DGS3',
+    '5': 'DGS5',           # 5-Year Treasury Constant Maturity Rate
+    '7': 'DGS7',
+    '10': 'DGS10',         # 10-Year Treasury Constant Maturity Rate
+    '20': 'DGS20',
+    '30': 'DGS30'          # 30-Year Treasury Constant Maturity Rate
 }
 
 # Function to fetch data from FRED
@@ -48,71 +55,61 @@ yield_data.fillna(method='ffill', inplace=True)
 
 print(yield_data.head())
 
-# Select the 10-year Treasury yield data
-rates = yield_data['DGS10'].dropna()
+# Function to estimate Vasicek model parameters
+def estimate_vasicek_parameters(r):
+    dt = 1 / 252  # Assume daily data with 252 trading days in a year
+    dr = np.diff(r)
 
-# Calculate the changes in interest rates
-dt = 1 / 252  # Assume daily data with 252 trading days in a year
-r = rates.values.flatten()
-dr = np.diff(r)
+    def vasicek_log_likelihood(params):
+        alpha, beta, sigma = params
+        r_mean = r[:-1] + alpha * (beta - r[:-1]) * dt
+        variance = sigma ** 2 * dt
+        regularization = 1e-4 * (alpha**2 + beta**2 + sigma**2)
+        log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
+        return -log_likelihood
 
-# Log-likelihood function for the Vasicek model with regularization
-def vasicek_log_likelihood(params):
-    alpha, beta, sigma = params
-    r_mean = r[:-1] + alpha * (beta - r[:-1]) * dt
-    variance = sigma ** 2 * dt
-    regularization = 1e-4 * (alpha**2 + beta**2 + sigma**2)
-    log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
-    return -log_likelihood
+    initial_params = [0.01, np.mean(r), 0.01]
+    bounds = [(0, 1), (0, 1), (0, 1)]
+    result = minimize(vasicek_log_likelihood, initial_params, bounds=bounds)
+    return result.x
 
-# Initial parameter guesses 
-initial_params = [0.01, np.mean(r), 0.01]
-bounds = [(0, 1), (0, 1), (0, 1)]
+# Function to estimate CIR model parameters
+def estimate_cir_parameters(r):
+    dt = 1 / 252  # Assume daily data with 252 trading days in a year
+    dr = np.diff(r)
 
-# Minimize the negative log-likelihood
-result = minimize(vasicek_log_likelihood, initial_params, bounds=bounds)
-alpha_vasicek, beta_vasicek, sigma_vasicek = result.x
+    def cir_log_likelihood(params):
+        alpha, beta, sigma = params
+        r_mean = r[:-1] + alpha * (beta - r[:-1]) * dt
+        variance = sigma ** 2 * r[:-1] * dt
+        regularization = 1e-4 * (alpha**2 + beta**2 + sigma**2)
+        log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
+        return -log_likelihood
 
-print(f"Estimated parameters for Vasicek model: alpha={alpha_vasicek}, beta={beta_vasicek}, sigma={sigma_vasicek}")
+    initial_params = [0.01, np.mean(r), 0.01]
+    bounds = [(0, 1), (0, 1), (0, 1)]
+    result = minimize(cir_log_likelihood, initial_params, bounds=bounds)
+    return result.x
 
-# Log-likelihood function for the CIR model with regularization
-# Improved log-likelihood function for the CIR model with regularization
-def cir_log_likelihood(params):
-    alpha, beta, sigma = params
-    r_mean = r[:-1] + alpha * (beta - r[:-1]) * dt
-    variance = sigma ** 2 * r[:-1] * dt
-    regularization = 1e-4 * (alpha**2 + beta**2 + sigma**2)
-    log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
-    return -log_likelihood
+# Function to estimate Hull-White model parameters
+def estimate_hull_white_parameters(r):
+    dt = 1 / 252  # Assume daily data with 252 trading days in a year
+    dr = np.diff(r)
 
-# Initial parameter guesses
-initial_params = [0.01, np.mean(r), 0.01]
+    def hull_white_log_likelihood(params):
+        alpha, sigma = params
+        r_mean = r[:-1] + alpha * (np.mean(r) - r[:-1]) * dt
+        variance = sigma ** 2 * dt
+        regularization = 1e-4 * (alpha**2 + sigma**2)
+        log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
+        return -log_likelihood
 
-# Minimize the negative log-likelihood
-result = minimize(cir_log_likelihood, initial_params, bounds=bounds)
-alpha_cir, beta_cir, sigma_cir = result.x
+    initial_params = [0.01, 0.01]
+    bounds = [(0, 1), (0, 1)]
+    result = minimize(hull_white_log_likelihood, initial_params, bounds=bounds)
+    return result.x
 
-print(f"Estimated parameters for CIR model: alpha={alpha_cir}, beta={beta_cir}, sigma={sigma_cir}")
-
-# Log-likelihood function for the Hull-White model with regularization
-def hull_white_log_likelihood(params):
-    alpha, sigma = params
-    r_mean = r[:-1] + alpha * (np.mean(r) - r[:-1]) * dt
-    variance = sigma ** 2 * dt
-    regularization = 1e-4 * (alpha**2 + sigma**2)
-    log_likelihood = -0.5 * np.sum((dr - r_mean) ** 2 / variance + np.log(variance)) + regularization
-    return -log_likelihood
-
-# Improved initial parameter guesses
-initial_params = [0.01, 0.01]
-
-# Minimize the negative log-likelihood
-result = minimize(hull_white_log_likelihood, initial_params, bounds=[(0, 1), (0, 1)])
-alpha_hw, sigma_hw = result.x
-
-print(f"Estimated parameters for Hull-White model: alpha={alpha_hw}, sigma={sigma_hw}")
-
-# Vasicek Model Simulation
+# Function to simulate interest rates using Vasicek model
 def vasicek_simulation(alpha, beta, sigma, r0, T, dt):
     N = int(T / dt)
     rates = np.zeros(N)
@@ -122,7 +119,7 @@ def vasicek_simulation(alpha, beta, sigma, r0, T, dt):
         rates[t] = rates[t-1] + dr
     return rates
 
-# CIR Model Simulation
+# Function to simulate interest rates using CIR model
 def cir_simulation(alpha, beta, sigma, r0, T, dt):
     N = int(T / dt)
     rates = np.zeros(N)
@@ -132,42 +129,49 @@ def cir_simulation(alpha, beta, sigma, r0, T, dt):
         rates[t] = max(rates[t-1] + dr, 0)  # Ensure non-negativity
     return rates
 
-# Hull-White Model Simulation
-def hull_white_simulation(alpha, sigma, r0, T, dt):
+# Function to simulate interest rates using Hull-White model
+def hull_white_simulation(alpha, sigma, r0, mean_r, T, dt):
     N = int(T / dt)
     rates = np.zeros(N)
     rates[0] = r0
     for t in range(1, N):
-        dr = alpha * (np.mean(r) - rates[t-1]) * dt + sigma * np.sqrt(dt) * np.random.normal()
+        dr = alpha * (mean_r - rates[t-1]) * dt + sigma * np.sqrt(dt) * np.random.normal()
         rates[t] = rates[t-1] + dr
     return rates
 
-# Simulate interest rates using the calibrated models
-simulated_rates_vasicek = vasicek_simulation(alpha_vasicek, beta_vasicek, sigma_vasicek, r[0], len(r) * dt, dt)
-simulated_rates_cir = cir_simulation(alpha_cir, beta_cir, sigma_cir, r[0], len(r) * dt, dt)
-simulated_rates_hw = hull_white_simulation(alpha_hw, sigma_hw, r[0], len(r) * dt, dt)
+# Create a PDF file for charts
+pdf_path = output_dir + 'simulated_interest_rates.pdf'
+with PdfPages(pdf_path) as pdf:
+    for tenor, series_id in series_ids.items():
+        # Select the data for the current tenor
+        rates = yield_data[series_id].dropna()
+        if rates.empty:
+            continue
 
-# Convert to DataFrame for saving to Excel
-simulation_df = pd.DataFrame({
-    'Actual Rates': r,
-    'Simulated Rates (Vasicek)': simulated_rates_vasicek,
-    'Simulated Rates (CIR)': simulated_rates_cir,
-    'Simulated Rates (Hull-White)': simulated_rates_hw
-}, index=rates.index)
+        # Estimate parameters for Vasicek, CIR, and Hull-White models
+        alpha_vasicek, beta_vasicek, sigma_vasicek = estimate_vasicek_parameters(rates.values)
+        alpha_cir, beta_cir, sigma_cir = estimate_cir_parameters(rates.values)
+        alpha_hw, sigma_hw = estimate_hull_white_parameters(rates.values)
 
-# Save to Excel
-simulation_df.to_excel(output_dir + 'simulated_interest_rates.xlsx')
+        # Simulate interest rates using the calibrated models
+        dt = 1 / 252
+        T = len(rates) * dt
+        mean_r = np.mean(rates.values)
+        simulated_rates_vasicek = vasicek_simulation(alpha_vasicek, beta_vasicek, sigma_vasicek, rates.values[0], T, dt)
+        simulated_rates_cir = cir_simulation(alpha_cir, beta_cir, sigma_cir, rates.values[0], T, dt)
+        simulated_rates_hw = hull_white_simulation(alpha_hw, sigma_hw, rates.values[0], mean_r, T, dt)
 
-# Plot the actual vs simulated interest rates
-plt.figure(figsize=(14, 7))
+        # Plot the actual vs simulated interest rates
+        plt.figure(figsize=(14, 7))
+        plt.plot(rates.index, rates.values, label='Actual Rates')
+        plt.plot(rates.index, simulated_rates_vasicek, label='Simulated Rates (Vasicek)', linestyle='--')
+        plt.plot(rates.index, simulated_rates_cir, label='Simulated Rates (CIR)', linestyle='--')
+        plt.plot(rates.index, simulated_rates_hw, label='Simulated Rates (Hull-White)', linestyle='--')
+        plt.xlabel('Year')
+        plt.ylabel('Interest Rate (%)')
+        plt.title(f'Actual vs Simulated Interest Rates - {tenor} Years')
+        plt.legend()
+        pdf.savefig()
+        plt.close()
 
-plt.plot(rates.index, r, label='Actual Rates')
-plt.plot(rates.index, simulated_rates_vasicek, label='Simulated Rates (Vasicek)', linestyle='--')
-plt.plot(rates.index, simulated_rates_cir, label='Simulated Rates (CIR)', linestyle='--')
-plt.plot(rates.index, simulated_rates_hw, label='Simulated Rates (Hull-White)', linestyle='--')
-
-plt.xlabel('Year')
-plt.ylabel('Interest Rate (%)')
-plt.title('Actual vs Simulated Interest Rates')
-plt.legend()
-plt.show()
+print(f"Charts have been saved to {pdf_path}")
