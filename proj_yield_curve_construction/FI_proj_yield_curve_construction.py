@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import requests
@@ -5,15 +6,12 @@ from scipy.interpolate import PchipInterpolator
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.ticker as mtick
-import os
 from scipy.optimize import minimize
 from tqdm import tqdm
+from scipy.optimize import brentq
+# ============================ Configuration ============================ #
 
-# Set up output directory
-output_dir = 'F:/strategy_playground/proj_yield_curve_construction/output/'
-os.makedirs(output_dir, exist_ok=True)
-
-# FRED API endpoint and API key (consider using environment variables for better security)
+# FRED API endpoint and API key
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 API_KEY = os.getenv('FRED_API_KEY', "3512f99492b0e9022667d242256548cb")
 
@@ -32,8 +30,27 @@ series_ids = {
     '30': 'DGS30'
 }
 series_key_list = [float(x) if float(x) < 1 else int(x) for x in series_ids.keys()]
-# Function to fetch data from FRED
+
+# Additional maturities for interpolation
+additional_maturities = [4, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 28]
+all_maturities = sorted(series_key_list + additional_maturities)
+
+# Output directory
+output_dir = 'F:/strategy_playground/proj_yield_curve_construction/output/'
+
+# ============================ Function Definitions ============================ #
+
 def fetch_data(series_id, api_key):
+    """
+    Fetch data from FRED API for a given series ID.
+
+    Args:
+        series_id (str): The FRED series ID.
+        api_key (str): The FRED API key.
+
+    Returns:
+        pd.DataFrame: DataFrame containing 'date' and series data.
+    """
     params = {
         'series_id': series_id,
         'api_key': api_key,
@@ -48,27 +65,17 @@ def fetch_data(series_id, api_key):
         return pd.DataFrame(columns=['date', series_id])
 
 
-# Fetch data for all series and merge into a single DataFrame
-dfs = [fetch_data(series_id, API_KEY) for series_id in series_ids.values()]
-yield_data = dfs[0]
-for df in dfs[1:]:
-    yield_data = yield_data.merge(df, on='date')
-
-yield_data['date'] = pd.to_datetime(yield_data['date'])
-yield_data.set_index('date', inplace=True)
-
-# Replace dots with NaN and convert to float
-yield_data = yield_data.apply(pd.to_numeric, errors='coerce')
-
-# Fill missing values using forward fill method
-yield_data.fillna(method='ffill', inplace=True)
-yield_data.to_excel(output_dir + 'yield_data.xlsx', index=False)
-
-
-# Function for bootstrapping zero rates with continuous compounding
 def bootstrap_zero_curve_continuous(yield_data, maturities):
-    import numpy as np
-    from scipy.optimize import brentq
+    """
+    Bootstrap zero rates with continuous compounding.
+
+    Args:
+        yield_data (pd.DataFrame): DataFrame containing yield data.
+        maturities (list): List of maturities to bootstrap.
+
+    Returns:
+        pd.DataFrame: DataFrame containing bootstrapped zero rates.
+    """
     zero_rates = pd.DataFrame(index=yield_data.index, columns=maturities)
 
     m = 2  # Semi-annual coupon payments
@@ -117,17 +124,20 @@ def bootstrap_zero_curve_continuous(yield_data, maturities):
 
     return zero_rates
 
-# Setup the maturities
-original_maturities = series_key_list
-additional_maturities = [4, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 28]
-all_maturities = sorted(original_maturities + additional_maturities)
 
-# Bootstrap the zero curve with continuous compounding
-zero_curve_continuous = bootstrap_zero_curve_continuous(yield_data, original_maturities)
-zero_curve_continuous.to_excel(output_dir + 'zero_curve_data_continuous.xlsx', index=False)
-
-# Function for interpolation using PCHIP
 def interpolate_yields(yield_data, maturity_labels, maturities, all_maturities):
+    """
+    Interpolate yields using PCHIP.
+
+    Args:
+        yield_data (pd.DataFrame): DataFrame containing yield data.
+        maturity_labels (list): List of series IDs corresponding to maturities.
+        maturities (list): Original maturities.
+        all_maturities (list): All maturities including additional ones.
+
+    Returns:
+        pd.DataFrame: DataFrame containing interpolated yields.
+    """
     interpolated_yields = pd.DataFrame(index=yield_data.index, columns=all_maturities)
 
     for date in yield_data.index:
@@ -140,15 +150,19 @@ def interpolate_yields(yield_data, maturity_labels, maturities, all_maturities):
 
     return interpolated_yields
 
-# Interpolate the original FRED yield curve using the numeric maturities
-interpolated_fred_curve = interpolate_yields(yield_data, list(series_ids.values()), original_maturities, all_maturities)
-interpolated_fred_curve.to_excel(output_dir + 'interpolate_yield_data.xlsx', index=False)
 
-# Convert the interpolated FRED curve to the same units as the bootstrapped curve (percentages)
-interpolated_fred_curve = interpolated_fred_curve / 100
-
-# Calibration Function
 def cost_function(params, market_data, maturities):
+    """
+    Cost function for calibration using PCHIP.
+
+    Args:
+        params (np.ndarray): Current parameters (yields).
+        market_data (np.ndarray): Market data yields.
+        maturities (list): Maturities corresponding to the yields.
+
+    Returns:
+        float: Sum of squared differences.
+    """
     # Use PCHIP to create an interpolated curve based on current parameters
     pchip = PchipInterpolator(maturities, params)
     model_curve = pchip(maturities)
@@ -156,7 +170,18 @@ def cost_function(params, market_data, maturities):
     error = np.sum((market_data - model_curve) ** 2)
     return error
 
+
 def calibrate_curve(yield_data, original_maturities):
+    """
+    Calibrate the yield curve to minimize the cost function.
+
+    Args:
+        yield_data (pd.DataFrame): DataFrame containing bootstrapped zero rates.
+        original_maturities (list): List of original maturities.
+
+    Returns:
+        pd.DataFrame: DataFrame containing optimized curves.
+    """
     optimized_curves = pd.DataFrame(index=yield_data.index, columns=original_maturities)
 
     for date_idx in range(1, len(yield_data)):
@@ -179,24 +204,75 @@ def calibrate_curve(yield_data, original_maturities):
 
     return optimized_curves
 
-# Implement
-optimized_curves = calibrate_curve(zero_curve_continuous, original_maturities)
-optimized_curves.to_excel(output_dir + 'optimized_curves.xlsx', index=False)
+# ============================ Main Function ============================ #
 
-# Save plots to PDF with progress bar
-with PdfPages(output_dir + 'yield_curves.pdf') as pdf:
-    for date in tqdm(interpolated_fred_curve.index, desc="Generating yield curve plots"):
-        plt.figure(figsize=(12, 8))
-        plt.plot(all_maturities, interpolated_fred_curve.loc[date], marker='x', linestyle='--',
-                 label='Interpolated FRED Yield Curve')
-        if date in optimized_curves.index:
-            plt.plot(original_maturities, optimized_curves.loc[date], marker='o', linestyle='-',
-                     label='Optimized Yield Curve')
-        plt.title(f'Yield Curves on {date.date()}')
-        plt.xlabel('Maturity (years)')
-        plt.ylabel('Yield (in percent)')
-        plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1))
-        plt.legend()
-        plt.grid(True)
-        pdf.savefig()
-        plt.close()
+def main():
+    # Set up output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Fetch data for all series and merge into a single DataFrame
+    dfs = [fetch_data(series_id, API_KEY) for series_id in series_ids.values()]
+    yield_data = dfs[0]
+    for df in dfs[1:]:
+        yield_data = yield_data.merge(df, on='date')
+
+    yield_data['date'] = pd.to_datetime(yield_data['date'])
+    yield_data.set_index('date', inplace=True)
+
+    # Replace dots with NaN and convert to float
+    yield_data = yield_data.apply(pd.to_numeric, errors='coerce')
+
+    # Fill missing values using forward fill method
+    yield_data.fillna(method='ffill', inplace=True)
+    yield_data.to_excel(os.path.join(output_dir, 'yield_data.xlsx'), index=False)
+
+    # Bootstrap the zero curve with continuous compounding
+    zero_curve_continuous = bootstrap_zero_curve_continuous(yield_data, series_key_list)
+    zero_curve_continuous.to_excel(os.path.join(output_dir, 'zero_curve_data_continuous.xlsx'), index=False)
+
+    # Interpolate the original FRED yield curve using the numeric maturities
+    interpolated_fred_curve = interpolate_yields(
+        yield_data,
+        list(series_ids.values()),
+        series_key_list,
+        all_maturities
+    )
+    interpolated_fred_curve.to_excel(os.path.join(output_dir, 'interpolate_yield_data.xlsx'), index=False)
+
+    # Convert the interpolated FRED curve to the same units as the bootstrapped curve (percentages)
+    interpolated_fred_curve = interpolated_fred_curve / 100
+
+    # Calibrate the yield curves
+    optimized_curves = calibrate_curve(zero_curve_continuous, series_key_list)
+    optimized_curves.to_excel(os.path.join(output_dir, 'optimized_curves.xlsx'), index=False)
+
+    # Save plots to PDF with progress bar
+    with PdfPages(os.path.join(output_dir, 'yield_curves.pdf')) as pdf:
+        for date in tqdm(interpolated_fred_curve.index, desc="Generating yield curve plots"):
+            plt.figure(figsize=(12, 8))
+            plt.plot(
+                all_maturities,
+                interpolated_fred_curve.loc[date],
+                marker='x',
+                linestyle='--',
+                label='Interpolated FRED Yield Curve'
+            )
+            if date in optimized_curves.index:
+                plt.plot(
+                    series_key_list,
+                    optimized_curves.loc[date],
+                    marker='o',
+                    linestyle='-',
+                    label='Optimized Yield Curve'
+                )
+            plt.title(f'Yield Curves on {date.date()}')
+            plt.xlabel('Maturity (years)')
+            plt.ylabel('Yield (in percent)')
+            plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1))
+            plt.legend()
+            plt.grid(True)
+            pdf.savefig()
+            plt.close()
+
+if __name__ == "__main__":
+    main()
