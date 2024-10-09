@@ -11,7 +11,7 @@ from tqdm import tqdm
 from scipy.optimize import brentq
 # ============================ Configuration ============================ #
 
-# FRED API endpoint and API key
+# FRED API endpoint and API key (consider using environment variables for better security)
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 API_KEY = os.getenv('FRED_API_KEY', "3512f99492b0e9022667d242256548cb")
 
@@ -34,9 +34,6 @@ series_key_list = [float(x) if float(x) < 1 else int(x) for x in series_ids.keys
 # Additional maturities for interpolation
 additional_maturities = [4, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 28]
 all_maturities = sorted(series_key_list + additional_maturities)
-
-# Output directory
-output_dir = 'F:/strategy_playground/proj_yield_curve_construction/output/'
 
 # ============================ Function Definitions ============================ #
 
@@ -204,10 +201,13 @@ def calibrate_curve(yield_data, original_maturities):
 
     return optimized_curves
 
+
 # ============================ Main Function ============================ #
 
 def main():
-    # Set up output directory
+    # Set up output directory relative to the script's location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, 'output')
     os.makedirs(output_dir, exist_ok=True)
 
     # Fetch data for all series and merge into a single DataFrame
@@ -250,21 +250,11 @@ def main():
     with PdfPages(os.path.join(output_dir, 'yield_curves.pdf')) as pdf:
         for date in tqdm(interpolated_fred_curve.index, desc="Generating yield curve plots"):
             plt.figure(figsize=(12, 8))
-            plt.plot(
-                all_maturities,
-                interpolated_fred_curve.loc[date],
-                marker='x',
-                linestyle='--',
-                label='Interpolated FRED Yield Curve'
-            )
+            plt.plot(all_maturities, interpolated_fred_curve.loc[date], marker='x', linestyle='--',
+                     label='Interpolated FRED Yield Curve')
             if date in optimized_curves.index:
-                plt.plot(
-                    series_key_list,
-                    optimized_curves.loc[date],
-                    marker='o',
-                    linestyle='-',
-                    label='Optimized Yield Curve'
-                )
+                plt.plot(series_key_list, optimized_curves.loc[date], marker='o', linestyle='-',
+                         label='Optimized Yield Curve')
             plt.title(f'Yield Curves on {date.date()}')
             plt.xlabel('Maturity (years)')
             plt.ylabel('Yield (in percent)')
