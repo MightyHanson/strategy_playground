@@ -7,116 +7,333 @@ from tqdm import tqdm
 import csv
 import time
 from dotenv import load_dotenv
-load_dotenv()  # Loads variables from .env into the environment
+from datetime import datetime, timedelta
+import yfinance as yf
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ================================ Configuration and Constants ================================
 
-FMP_API_KEY = os.getenv("FMP_API_KEY")
-BENCHMARK_INDICES = ['^VIX']  # Add more benchmark indices here if needed
-ETF_VOLUME_THRESHOLD = 200000  # Minimum average daily volume
-HISTORICAL_DATA_START_DATE = '1994-10-09'  # Adjust to get up to 30 years
-HISTORICAL_DATA_END_DATE = '2024-10-09'  # Current date or as needed
+load_dotenv()  # Load environment variables from .env file
 
-HISTORICAL_MONITOR_CSV_FILE = 'historical_data_monitor.csv'  # CSV file for monitoring historical data downloads
-ETF_MONITOR_CSV_FILE = 'etf_filter_monitor.csv'  # CSV file for monitoring ETF filtering
+FMP_API_KEY = os.getenv("FMP_API_KEY")  # Financial Modeling Prep API Key
+BENCHMARK_INDICES = ['^VIX']  # List of benchmark indices to include
+ETF_VOLUME_THRESHOLD = 200000  # Minimum average daily volume for ETFs
+HISTORICAL_DATA_START_DATE = '1994-10-09'  # Start date for historical data (up to ~30 years)
+HISTORICAL_DATA_END_DATE = datetime.today().strftime('%Y-%m-%d')  # Current date
+MARKET_CAP_THRESHOLD = 500000000
+HISTORICAL_MONITOR_CSV_FILE = 'historical_data_monitor.csv'  # Log file for historical data downloads
+ETF_MONITOR_CSV_FILE = 'etf_filter_monitor.csv'  # Log file for ETF filtering process
+STOCK_MONITOR_CSV_FILE = 'stock_latest_date_monitor.csv'
 
 # ================================ Define Output Directory ================================
 
 def define_output_directory():
-    """Define and create the output directory relative to the script's location."""
+    """
+    Set up the output directory where all data and logs will be stored.
+
+    Creates a 'dataset' folder in the same location as the script if it doesn't exist.
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_dir = os.path.join(script_dir, 'dataset')
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Output directory set to: {output_dir}")
+    print(f"Output directory is set to: {output_dir}")
     return output_dir
+
+# ================================ Check if Dataset Exists ================================
+
+def dataset_exists(db_path):
+    """
+    Check if the SQLite database file exists.
+
+    Args:
+        db_path (str): Path to the SQLite database file.
+
+    Returns:
+        bool: True if the database exists, False otherwise.
+    """
+    return os.path.exists(db_path)
+
 
 # ================================ Fetch Symbols from Financial Modeling Prep ================================
 
-def fetch_stocks(api_key):
-    """Fetch stock symbols with Market Cap > $500M using Financial Modeling Prep API."""
-    stocks_url = f'https://financialmodelingprep.com/api/v3/stock-screener?marketCapMoreThan=500000000&apikey={api_key}'
+def fetch_stocks(api_key, market_cap_threshold):
+    """
+    Retrieve stock symbols with a market capitalization greater than $500M.
+
+    Uses the Financial Modeling Prep API to fetch actively traded stocks.
+
+    Args:
+        api_key (str): Your Financial Modeling Prep API key.
+
+    Returns:
+        list: A list of stock symbols.
+    """
+    stocks_url = f'https://financialmodelingprep.com/api/v3/stock-screener?marketCapMoreThan={market_cap_threshold}&apikey={api_key}'
     try:
         response = requests.get(stocks_url)
-        response.raise_for_status()  # Raise an error for bad status
+        response.raise_for_status()  # Check for request errors
         stocks_data = response.json()
         stock_symbols = [stock['symbol'] for stock in stocks_data]
-        print(f"Fetched {len(stock_symbols)} stocks with Market Cap > $500M")
+        print(f"Successfully fetched {len(stock_symbols)} stocks with Market Cap > ${market_cap_threshold / 1000000}M.")
         return stock_symbols
     except Exception as e:
-        print(f"Error fetching stocks: {e}")
+        print(f"Failed to fetch stocks: {e}")
         return []
 
+# ================================ Fetch Latest Date Function ================================
+
+def fetch_latest_date(symbol):
+    """
+    Fetch the latest trading date for a given stock symbol using Yahoo Finance.
+
+    Args:
+        symbol (str): The stock symbol to fetch data for.
+
+    Returns:
+        tuple: (symbol, latest_date, status)
+               - symbol (str): The stock symbol.
+               - latest_date (str or None): Latest available trading date in 'YYYY-MM-DD' format.
+               - status (str): 'Success', 'No Data', or 'Error'.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")  # Fetch the most recent trading day
+
+        if hist.empty:
+            print(f"No data found for {symbol} on Yahoo Finance. Marking for removal.")
+            return (symbol, None, 'No Data')
+
+        latest_date = hist.index[-1].strftime('%Y-%m-%d')
+        return (symbol, latest_date, 'Success')
+
+    except Exception as e:
+        print(f"Error fetching data for {symbol} on Yahoo Finance: {e}")
+        return (symbol, None, 'Error')
+
+# ================================ Filter Stocks by Latest Data Date using Multithreading ================================
+
+def filter_stocks_by_latest_date(stock_symbols, output_dir, max_workers=5):
+    """
+    Filter out stock symbols that do not have the latest data date using multithreading.
+
+    Fetch the latest available data date for each symbol using Yahoo Finance,
+    determine the overall latest date, and remove symbols with older dates.
+
+    Args:
+        stock_symbols (list): List of stock symbols to filter.
+        output_dir (str): Directory where the log CSV will be saved.
+        max_workers (int, optional): Number of threads for parallel downloads. Defaults to 10.
+
+    Returns:
+        list: Updated list of stock symbols after filtering.
+    """
+    symbol_latest_dates = {}
+    removed_symbols = []
+    monitor_csv_path = os.path.join(output_dir, STOCK_MONITOR_CSV_FILE)
+
+    # Initialize the CSV file with headers
+    with open(monitor_csv_path, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Symbol', 'Latest_Date', 'Status'])
+
+    print("Filtering stocks based on latest data dates...")
+
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all fetch_latest_date tasks
+        futures = {executor.submit(fetch_latest_date, symbol): symbol for symbol in stock_symbols}
+
+        # Use tqdm to display progress
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Verifying symbol data dates"):
+            symbol = futures[future]
+            try:
+                sym, latest_date, status = future.result()
+                # Write to CSV
+                with open(monitor_csv_path, mode='a', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([sym, latest_date if latest_date else 0, status])
+
+                if status == 'Success' and latest_date:
+                    symbol_latest_dates[sym] = latest_date
+                else:
+                    removed_symbols.append(sym)
+
+            except Exception as e:
+                print(f"Error processing {symbol}: {e}")
+                with open(monitor_csv_path, mode='a', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([symbol, 0, 'Error'])
+                removed_symbols.append(symbol)
+
+    # Determine the overall latest date across all symbols
+    if not symbol_latest_dates:
+        print("No valid symbols found after checking with Yahoo Finance. Exiting.")
+        sys.exit(1)
+
+    overall_latest_date = max(symbol_latest_dates.values())
+    print(f"Overall latest data date across all symbols: {overall_latest_date}")
+
+    # Remove symbols whose latest date is older than the overall latest date
+    symbols_to_remove = [symbol for symbol, date in symbol_latest_dates.items() if date < overall_latest_date]
+    for symbol in symbols_to_remove:
+        print(f"{symbol} is outdated (Latest: {symbol_latest_dates[symbol]}, Expected: {overall_latest_date}). Removing from dataset.")
+        removed_symbols.append(symbol)
+
+    # Remove duplicates in removed_symbols
+    removed_symbols = list(set(removed_symbols))
+
+    # Remove the outdated symbols from stock_symbols
+    updated_stock_symbols = [symbol for symbol in stock_symbols if symbol not in removed_symbols]
+
+    print(f"Removed {len(removed_symbols)} outdated stock symbols. {len(updated_stock_symbols)} symbols remain.")
+
+    return updated_stock_symbols
+
 def fetch_etfs(api_key):
-    """Fetch ETF symbols using Financial Modeling Prep API."""
+    """
+    Retrieve ETF symbols using the Financial Modeling Prep API.
+
+    Args:
+        api_key (str): Your Financial Modeling Prep API key.
+
+    Returns:
+        list: A list of ETF symbols.
+    """
     etfs_url = f'https://financialmodelingprep.com/api/v3/etf/list?apikey={api_key}'
     try:
         response = requests.get(etfs_url)
         response.raise_for_status()
         etfs_data = response.json()
         etf_symbols = [etf['symbol'] for etf in etfs_data]
-        print(f"Fetched {len(etf_symbols)} ETFs")
+        print(f"Successfully fetched {len(etf_symbols)} ETFs.")
         return etf_symbols
     except Exception as e:
-        print(f"Error fetching ETFs: {e}")
+        print(f"Failed to fetch ETFs: {e}")
         return []
 
 # ================================ Filter ETFs by Volume using Financial Modeling Prep ================================
 
-def filter_etfs_by_volume(etf_symbols, volume_threshold, output_dir, api_key):
-    """Filter ETFs based on trading volume and log the process to a CSV file."""
+# ================================ Fetch Volume Function ================================
+
+def fetch_volume(symbol, volume_threshold):
+    """
+    Fetch the latest trading volume for a given ETF symbol using Yahoo Finance.
+
+    Args:
+        symbol (str): The ETF symbol to fetch volume for.
+        volume_threshold (int): The minimum volume threshold.
+
+    Returns:
+        tuple: (symbol, volume, status)
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")  # Fetch the most recent trading day
+
+        if hist.empty:
+            print(f"No data found for ETF: {symbol}")
+            return (symbol, 0, 'No Data')
+
+        # Extract the latest trading volume
+        volume = int(hist['Volume'].iloc[-1])
+        status = 'Pass' if volume >= volume_threshold else 'Fail'
+        return (symbol, volume, status)
+
+    except Exception as e:
+        print(f"Error fetching volume for {symbol}: {e}")
+        return (symbol, 0, 'Error')
+
+# ================================ Filter ETFs by Volume using Yahoo Finance with Multithreading ================================
+
+def filter_etfs_by_volume(etf_symbols, volume_threshold, output_dir, max_workers=5):
+    """
+    Filter ETFs based on their trading volume using Yahoo Finance with multithreading.
+
+    Only ETFs with a daily trading volume above the specified threshold are retained.
+    The process is logged to a CSV file for reference.
+
+    Args:
+        etf_symbols (list): List of ETF symbols to filter.
+        volume_threshold (int): Minimum daily trading volume required.
+        output_dir (str): Directory where the log CSV will be saved.
+        max_workers (int, optional): Number of threads for parallel downloads. Defaults to 5.
+
+    Returns:
+        list: A list of ETFs that passed the volume filter.
+    """
     filtered_etfs = []
     failed_symbols = []
     monitor_csv_path = os.path.join(output_dir, ETF_MONITOR_CSV_FILE)
+    num_max_workers = max_workers  # Number of threads for parallel downloads
 
     # Initialize the CSV file with headers
-    with open(monitor_csv_path, mode='w', newline='') as file:
+    with open(monitor_csv_path, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         writer.writerow(['Symbol', 'Volume', 'Status'])
 
-    for symbol in tqdm(etf_symbols, desc="Filtering ETFs by Volume"):
-        try:
-            # Fetch ETF details to get average volume or latest volume
-            # Using Financial Modeling Prep's quote endpoint
-            quote_url = f'https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={api_key}'
-            quote_response = requests.get(quote_url)
-            quote_response.raise_for_status()
-            quote_data = quote_response.json()
+    # Define a helper function to write results safely
+    def write_result(sym, vol, status):
+        with open(monitor_csv_path, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow([sym, vol, status])
 
-            if not quote_data:
-                print(f"No data found for ETF: {symbol}")
-                writer.writerow([symbol, 0, 'No Data'])
-                continue
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=num_max_workers) as executor:
+        # Submit all fetch_volume tasks
+        futures = {executor.submit(fetch_volume, symbol, volume_threshold): symbol for symbol in etf_symbols}
 
-            # Assuming 'volume' is the latest trading volume
-            volume = quote_data[0].get('volume', 0)
-            status = 'Pass' if volume >= volume_threshold else 'Fail'
-            writer.writerow([symbol, volume, status])
+        # Use tqdm to display progress
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Filtering ETFs by Volume"):
+            symbol = futures[future]
+            try:
+                sym, vol, status = future.result()
+                write_result(sym, vol, status)
 
-            if status == 'Pass':
-                filtered_etfs.append(symbol)
+                if status == 'Pass':
+                    filtered_etfs.append(sym)
+                elif status == 'Error':
+                    failed_symbols.append(sym)
 
-        except Exception as e:
-            print(f"Error fetching volume for {symbol}: {e}")
-            writer.writerow([symbol, 0, 'Error'])
-            failed_symbols.append(symbol)
+            except Exception as e:
+                print(f"Error processing {symbol}: {e}")
+                write_result(symbol, 0, 'Error')
+                failed_symbols.append(symbol)
 
     print(f"Filtered ETFs with Volume >= {volume_threshold}: {len(filtered_etfs)}")
     if failed_symbols:
-        print(f"Failed to fetch volume for {len(failed_symbols)} ETFs")
+        print(f"Encountered issues with {len(failed_symbols)} ETFs.")
+
     return filtered_etfs
 
 
 # ================================ Add Benchmark Indices ================================
 
 def add_benchmark_indices(benchmark_indices):
-    """Add benchmark indices to the list."""
-    print(f"Adding benchmark indices: {', '.join(benchmark_indices)}")
+    """
+    Include benchmark indices in the list of symbols.
+
+    Args:
+        benchmark_indices (list): List of benchmark index symbols.
+
+    Returns:
+        list: The same list of benchmark indices.
+    """
+    print(f"Including benchmark indices: {', '.join(benchmark_indices)}")
     return benchmark_indices
+
 
 # ================================ Save Symbols to Excel ================================
 
 def save_symbols_to_excel(stock_symbols, etf_symbols, benchmark_indices, output_dir):
-    """Save stock, ETF, and benchmark index symbols to separate sheets in an Excel file."""
+    """
+    Save stock, ETF, and benchmark index symbols into an Excel file with separate sheets.
+
+    Args:
+        stock_symbols (list): List of stock symbols.
+        etf_symbols (list): List of ETF symbols.
+        benchmark_indices (list): List of benchmark index symbols.
+        output_dir (str): Directory where the Excel file will be saved.
+    """
     symbols_excel_path = os.path.join(output_dir, 'symbols.xlsx')
     df_stocks = pd.DataFrame(stock_symbols, columns=['Stock Symbol'])
     df_etfs = pd.DataFrame(etf_symbols, columns=['ETF Symbol'])
@@ -135,10 +352,18 @@ def save_symbols_to_excel(stock_symbols, etf_symbols, benchmark_indices, output_
 # ================================ Load Symbols from Excel ================================
 
 def load_symbols_from_excel(output_dir):
-    """Load symbols from the existing Excel file."""
+    """
+    Load stock, ETF, and benchmark index symbols from an existing Excel file.
+
+    Args:
+        output_dir (str): Directory where the Excel file is located.
+
+    Returns:
+        tuple: Three lists containing stock symbols, ETF symbols, and benchmark index symbols.
+    """
     symbols_excel_path = os.path.join(output_dir, 'symbols.xlsx')
     if not os.path.exists(symbols_excel_path):
-        print(f"Error: {symbols_excel_path} does not exist. Please fetch symbols first.")
+        print(f"Error: {symbols_excel_path} does not exist. Please run the symbol fetching process first.")
         sys.exit(1)
 
     try:
@@ -146,21 +371,31 @@ def load_symbols_from_excel(output_dir):
         stock_symbols = xls.parse('Stocks')['Stock Symbol'].dropna().tolist()
         etf_symbols = xls.parse('ETFs')['ETF Symbol'].dropna().tolist()
         benchmark_symbols = xls.parse('Benchmark Indices')['Benchmark Symbol'].dropna().tolist()
-        print(f"Loaded {len(stock_symbols)} stocks, {len(etf_symbols)} ETFs, and {len(benchmark_symbols)} benchmark indices from {symbols_excel_path}")
+        print(
+            f"Loaded {len(stock_symbols)} stocks, {len(etf_symbols)} ETFs, and {len(benchmark_symbols)} benchmark indices from {symbols_excel_path}")
         return stock_symbols, etf_symbols, benchmark_symbols
     except Exception as e:
         print(f"Error loading symbols from Excel: {e}")
         sys.exit(1)
 
+
 # ================================ Initialize SQLite Database ================================
 
 def initialize_database(db_path):
-    """Initialize the SQLite database and create the historical_data table if it doesn't exist."""
+    """
+    Set up the SQLite database and create the historical_data table if it doesn't exist.
+
+    Args:
+        db_path (str): Path to the SQLite database file.
+
+    Returns:
+        tuple: SQLite connection and cursor objects.
+    """
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Create table if not exists
+        # Create the table with a primary key to avoid duplicate entries
         create_table_query = '''
         CREATE TABLE IF NOT EXISTS historical_data (
             symbol TEXT NOT NULL,
@@ -174,8 +409,10 @@ def initialize_database(db_path):
         )
         '''
         cursor.execute(create_table_query)
-        # Create index for faster queries
+
+        # Add indexes to speed up queries
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_symbol ON historical_data(symbol)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_date ON historical_data(date)')
         conn.commit()
         print(f"Initialized SQLite database and ensured table 'historical_data' exists.")
         return conn, cursor
@@ -184,28 +421,89 @@ def initialize_database(db_path):
         sys.exit(1)
 
 
+# ================================ Get Latest Date for a Symbol ================================
+
+def get_latest_date(conn, symbol):
+    """
+    Retrieve the latest date for a given symbol in the database.
+
+    Args:
+        conn (sqlite3.Connection): SQLite connection object.
+        symbol (str): The symbol to query.
+
+    Returns:
+        str: The latest date in 'YYYY-MM-DD' format, or None if no records exist.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(date) FROM historical_data WHERE symbol = ?", (symbol,))
+    result = cursor.fetchone()
+    return result[0] if result and result[0] else None
+
+
+# ================================ Insert Data with Conflict Handling ================================
+
+def insert_data_with_ignore(conn, df):
+    """
+    Insert data into the historical_data table with IGNORE on conflict.
+
+    Args:
+        conn (sqlite3.Connection): SQLite connection object.
+        df (pandas.DataFrame): DataFrame containing historical data.
+    """
+    cursor = conn.cursor()
+    for index, row in df.iterrows():
+        cursor.execute('''
+            INSERT OR IGNORE INTO historical_data (symbol, date, open, high, low, close, volume)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (row['symbol'], row['date'], row['open'], row['high'], row['low'], row['close'], row['volume']))
+    conn.commit()
+
 # ================================ Download Historical Data using Financial Modeling Prep ================================
 
-def download_historical_data_fmp(symbols, start_date, end_date, conn, output_dir, overwrite=False, api_key=FMP_API_KEY):
-    """Download historical data for all symbols using Financial Modeling Prep and save them into the SQLite database."""
-    cursor = conn.cursor()
+def download_historical_data_fmp(symbols, conn, output_dir, api_key=FMP_API_KEY):
+    """
+    Fetch and update historical data for a list of symbols.
+
+    If the dataset does not exist, it will fetch all data from the start date.
+    If the dataset exists, it will fetch only new data since the latest date.
+
+    Args:
+        symbols (list): List of symbols to download data for.
+        conn (sqlite3.Connection): SQLite connection object.
+        output_dir (str): Directory where the log CSV will be saved.
+        api_key (str): Your Financial Modeling Prep API key.
+    """
     monitor_csv_path = os.path.join(output_dir, HISTORICAL_MONITOR_CSV_FILE)
 
-    # Initialize the CSV file with headers and keep it open during writing
+    # Open the CSV file once and keep it open during the entire download process
     with open(monitor_csv_path, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Symbol', 'Status', 'Records Downloaded'])
 
-        for idx, symbol in enumerate(tqdm(symbols, desc="Downloading Historical Data")):
+        for symbol in tqdm(symbols, desc="Downloading Historical Data"):
             try:
-                print(f"Downloading data for {symbol}")
-                # Fetch historical data from FMP
-                historical_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&to={end_date}&apikey={api_key}'
+                print(f"Fetching data for {symbol}...")
+
+                # Determine the start date for fetching data
+                latest_date = get_latest_date(conn, symbol)
+                if latest_date:
+                    # Fetch data starting from the day after the latest date
+                    start_date_dt = datetime.strptime(latest_date, '%Y-%m-%d') + timedelta(days=1)
+                    start_date = start_date_dt.strftime('%Y-%m-%d')
+                    print(f"Latest date in DB for {symbol}: {latest_date}. Fetching data from {start_date} onwards.")
+                else:
+                    # If no data exists, start from the predefined start date
+                    start_date = HISTORICAL_DATA_START_DATE
+                    print(f"No existing data for {symbol}. Fetching data from {start_date}.")
+
+                # Construct the API URL for historical data
+                historical_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&to={HISTORICAL_DATA_END_DATE}&apikey={api_key}'
                 response = requests.get(historical_url)
                 response.raise_for_status()
                 data = response.json()
 
                 if 'historical' not in data:
+                    # Handle cases where the response doesn't contain historical data
                     if "Error Message" in data:
                         status = f"Error: {data['Error Message']}"
                     elif "Note" in data:
@@ -219,18 +517,19 @@ def download_historical_data_fmp(symbols, start_date, end_date, conn, output_dir
 
                 historical_data = data['historical']
                 if not historical_data:
-                    print(f"No historical data found for {symbol} in the specified date range.")
+                    print(
+                        f"No new historical data available for {symbol} between {start_date} and {HISTORICAL_DATA_END_DATE}.")
                     status = 'No Data'
                     records = 0
                     writer.writerow([symbol, status, records])
                     continue
 
-                # Convert historical data to DataFrame
+                # Convert the historical data into a DataFrame
                 df = pd.DataFrame(historical_data)
                 df['symbol'] = symbol
                 df = df[['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']]
 
-                # Handle missing or malformed data
+                # Clean the data by ensuring numeric types
                 df['open'] = pd.to_numeric(df['open'], errors='coerce')
                 df['high'] = pd.to_numeric(df['high'], errors='coerce')
                 df['low'] = pd.to_numeric(df['low'], errors='coerce')
@@ -239,85 +538,73 @@ def download_historical_data_fmp(symbols, start_date, end_date, conn, output_dir
 
                 records = len(df)
 
-                if overwrite:
-                    # Remove existing records for the symbol
-                    cursor.execute('DELETE FROM historical_data WHERE symbol = ?', (symbol,))
-                    conn.commit()
-
-                # Insert data into the database
-                try:
-                    df.to_sql('historical_data', conn, if_exists='append', index=False, method='multi', chunksize=1000)
-                    print(f"Saved data for {symbol}: {records} records")
-                    status = 'Success'
-                except sqlite3.IntegrityError:
-                    # Handle unique constraint failed error
-                    print(f"Duplicate entry found for {symbol}. Skipping insertion.")
-                    status = 'Duplicate Entry'
+                # Insert the new data into the database, ignoring duplicates
+                insert_data_with_ignore(conn, df)
+                print(f"Successfully inserted {records} new records for {symbol}.")
+                status = 'Success'
 
                 writer.writerow([symbol, status, records])
 
             except Exception as e:
-                print(f"Error downloading data for {symbol}: {e}")
+                print(f"Failed to download data for {symbol}: {e}")
                 writer.writerow([symbol, f'Error: {e}', 0])
 
-            # Rate limiting code removed as per subscription
-
-    print(f"All historical data downloaded and saved to the database.")
+    print("Finished downloading all historical data.")
 
 
 # ================================ Main Execution Flow ================================
 
-
 def main():
-    """Main function to orchestrate the fetching, filtering, and saving of symbols and data."""
+    """
+    Coordinate the entire data fetching and storage process.
+
+    Steps:
+    1. Set up the output directory.
+    2. Check if the dataset exists.
+       - If not, fetch symbols and build the dataset.
+       - If yes, load symbols and update the dataset.
+    3. Initialize the SQLite database.
+    4. Download historical data for all symbols.
+    """
     # Step 1: Define Output Directory
     output_dir = define_output_directory()
 
-    # ================================ Fetch Symbols Section ================================
+    # Define the path to the SQLite database
+    db_path = os.path.join(output_dir, 'historical_data.db')
 
-    # Uncomment the following lines if you want to fetch symbols and generate the Excel file
-    # Comment them out if you want to skip this section (e.g., during debugging)
+    # Step 2: Check if the dataset exists
+    if not dataset_exists(db_path):
+        print("Dataset does not exist. Building a new dataset.")
 
-    # Step 2: Fetch Stocks
-    # stock_symbols = fetch_stocks(FMP_API_KEY)
+        # ================================ Fetch Symbols Section ================================
 
-    # Step 3: Fetch ETFs
-    # etf_symbols = fetch_etfs(FMP_API_KEY)
+        stock_symbols = fetch_stocks(FMP_API_KEY, MARKET_CAP_THRESHOLD) # Data Fetch Step 1: Fetch stock symbols
+        stock_symbols = filter_stocks_by_latest_date(stock_symbols, output_dir) # Data Fetch Step 2: Filter stocks
+        etf_symbols = fetch_etfs(FMP_API_KEY) # Data Fetch Step 3: Fetch ETF symbols
+        etf_symbols = filter_etfs_by_volume(etf_symbols, ETF_VOLUME_THRESHOLD, output_dir) # Data Fetch Step 4: Filter ETFs by trading volume
+        benchmark_symbols = add_benchmark_indices(BENCHMARK_INDICES) # Data Fetch Step 5: Add benchmark indices
+        save_symbols_to_excel(stock_symbols, etf_symbols, benchmark_symbols, output_dir) # Data Fetch Step 6: Save all symbols to an Excel file
+    else:
+        print("Dataset exists. Loading existing symbols for update.")
+        # ================================ Load Symbols from Excel Section ================================
+        # Use this section to load existing symbols from the Excel file instead of fetching again
 
-    # Step 4: Filter ETFs by Volume with Monitoring
-    # filtered_etf_symbols = filter_etfs_by_volume(etf_symbols, ETF_VOLUME_THRESHOLD, output_dir, FMP_API_KEY)
-
-    # Step 5: Add Benchmark Indices
-    # final_benchmark_indices = add_benchmark_indices(BENCHMARK_INDICES)
-
-    # Step 6: Save Symbols to Excel with Separate Sheets
-    # save_symbols_to_excel(stock_symbols, filtered_etf_symbols, final_benchmark_indices, output_dir)
-
-    # ================================ Load Symbols from Excel Section ================================
-
-    # Uncomment the following line if you want to load existing symbols from the Excel file
-    # This is useful when you have already fetched symbols and just want to download historical data
-
-    # Uncomment the following line to load symbols instead of fetching them again
-    stock_symbols, etf_symbols, benchmark_symbols = load_symbols_from_excel(output_dir)
+        # Load symbols from the existing Excel file
+        stock_symbols, etf_symbols, benchmark_symbols = load_symbols_from_excel(output_dir)
 
     # ================================ Download Historical Data Section ================================
 
-    # Combine all symbols for historical data download
+    # Combine all symbols for data download
     all_symbols = stock_symbols + etf_symbols + benchmark_symbols
 
-    # Step 7: Initialize SQLite Database in Output Directory
-    db_path = os.path.join(output_dir, 'historical_data.db')
+    # Step 3: Initialize the SQLite database
     conn, cursor = initialize_database(db_path)
 
-    # Step 8: Download Historical Data with Progress Monitoring
+    # Step 4: Download historical data
     download_historical_data_fmp(
         all_symbols,
-        HISTORICAL_DATA_START_DATE,
-        HISTORICAL_DATA_END_DATE,
         conn,
         output_dir,
-        overwrite=False,  # Set to True if you want to overwrite existing data
         api_key=FMP_API_KEY
     )
 
@@ -325,6 +612,7 @@ def main():
     cursor.close()
     conn.close()
     print("Closed the SQLite database connection.")
+
 
 if __name__ == "__main__":
     main()
