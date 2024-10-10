@@ -6,7 +6,7 @@ __pycache__/
 # C extensions
 *.so
 # api file to ignore
-.env
+../proj_backtest_strategy/.env
 # Distribution / packaging
 .Python
 build/
@@ -121,7 +121,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+proj_yield_curve_construction/.env
 .venv
 env/
 venv/
