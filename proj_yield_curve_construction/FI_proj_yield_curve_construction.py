@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Loads variables from .env into the environment
 # ============================ Configuration ============================ #
 
-# FRED API endpoint and API key (consider using environment variables for better security)
+# FRED API endpoint and API key
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 API_KEY = os.getenv("FRED_API_KEY")
 
