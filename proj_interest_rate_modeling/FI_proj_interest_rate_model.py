@@ -5,11 +5,16 @@ from scipy.interpolate import PchipInterpolator
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from matplotlib.backends.backend_pdf import PdfPages
-
+from dotenv import load_dotenv
+import os
+load_dotenv()  # Loads variables from .env into the environment
 # FRED API endpoint and your API key
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
-API_KEY = "3512f99492b0e9022667d242256548cb"
-output_dir = 'F:/FIC_project/output/'
+API_KEY = os.getenv("FRED_API_KEY")
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+output_dir = os.path.join(script_dir, 'output')
+os.makedirs(output_dir, exist_ok=True)
 
 # Define the series IDs for different maturities
 series_ids = {
