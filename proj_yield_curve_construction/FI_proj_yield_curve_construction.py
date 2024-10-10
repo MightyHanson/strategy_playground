@@ -9,11 +9,13 @@ import matplotlib.ticker as mtick
 from scipy.optimize import minimize
 from tqdm import tqdm
 from scipy.optimize import brentq
+from dotenv import load_dotenv
+load_dotenv()  # Loads variables from .env into the environment
 # ============================ Configuration ============================ #
 
 # FRED API endpoint and API key (consider using environment variables for better security)
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
-API_KEY = os.getenv('FRED_API_KEY', "3512f99492b0e9022667d242256548cb")
+API_KEY = os.getenv("FRED_API_KEY")
 
 # Define the series IDs for different maturities
 series_ids = {
