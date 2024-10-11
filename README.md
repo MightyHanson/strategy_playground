@@ -1,11 +1,11 @@
-# strategy_playground
+# Strategy_Playground
 
 This branch will contain the strategies created and tested through routine observing.
 
 Progress on Each Project - Please feel free to look around my updates.
 
-## Project: Yield Curve Construction, Bootstrapping, and Analysis
+### Project: Yield Curve Construction, Bootstrapping, and Analysis
 
-## Backtest Strategy Project 
+### Backtest Strategy Project 
 
-## Project: Interest Rate Modeling
+### Project: Interest Rate Modeling
