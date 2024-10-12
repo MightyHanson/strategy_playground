@@ -191,21 +191,40 @@ def backtest_strategy(symbol, benchmark_symbol, data_loader, start_date, end_dat
         print(f"An error occurred while backtesting symbol {symbol} with benchmark {benchmark_symbol}: {e}")
         return None
 
-
-def optimize_parameters(symbols, start_date, end_date, optimization_params):
+def worker(symbol, start_date, end_date, initial_capital, buy_percentage, sell_percentage,
+           buy_threshold, decay_days):
     """
-    Optimize strategy parameters using grid search.
+    Worker function for multiprocessing.
+    """
+    # Initialize DataLoader inside the worker
+    data_loader = DataLoader(dataset_dir='dataset')
 
-    Parameters:
-    - symbols (list): List of symbols to backtest.
-    - start_date (str): Start date for backtest.
-    - end_date (str): End date for backtest.
-    - optimization_params (dict): Dictionary containing parameter lists for optimization.
+    metrics = backtest_strategy(
+        symbol=symbol,
+        benchmark_symbol='^VIX',  # Adjust as needed
+        data_loader=data_loader,
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=initial_capital,
+        buy_percentage=buy_percentage,
+        sell_percentage=sell_percentage,
+        method='soared_then_decay',
+        buy_threshold=buy_threshold,
+        decay_days=decay_days
+    )
+    if metrics is not None:
+        metrics['Symbol'] = symbol
+        metrics['Buy Threshold (%)'] = buy_threshold
+        metrics['Decay Days'] = decay_days
+    return metrics
 
-    Returns:
-    - optimization_results (pd.DataFrame): DataFrame containing aggregated metrics for each parameter combination.
+def optimize_parameters(symbols, start_date, end_date, optimization_params, initial_capital,
+                        buy_percentage, sell_percentage, output_dir):
+    """
+    Optimize strategy parameters using grid search with multiprocessing.
     """
     results = []
+    all_individual_results = []
     param_combinations = list(product(optimization_params['buy_thresholds'], optimization_params['decay_days_list']))
     total_combinations = len(param_combinations)
     print(f"Starting parameter optimization with {total_combinations} combinations.")
@@ -215,27 +234,13 @@ def optimize_parameters(symbols, start_date, end_date, optimization_params):
 
         temp_results = []
 
-        # Define a worker function for symbols
-        def worker(symbol):
-            metrics = backtest_strategy(
-                symbol=symbol,
-                benchmark_symbol='^VIX',  # Adjust as needed
-                data_loader=data_loader,
-                start_date=start_date,
-                end_date=end_date,
-                initial_capital=initial_capital,
-                buy_percentage=buy_percentage,
-                sell_percentage=sell_percentage,
-                method='soared_then_decay',
-                buy_threshold=buy_threshold,
-                decay_days=decay_days
-            )
-            return metrics
+        worker_args = [
+            (symbol, start_date, end_date, initial_capital, buy_percentage, sell_percentage,
+             buy_threshold, decay_days) for symbol in symbols
+        ]
 
-        # Use ThreadPoolExecutor to backtest symbols in parallel
-        with ThreadPoolExecutor(max_workers=100) as executor:
-        # with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-            futures = {executor.submit(worker, symbol): symbol for symbol in symbols}
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = {executor.submit(worker, *args): args[0] for args in worker_args}
             for future in tqdm(as_completed(futures), total=len(futures),
                                desc=f"Param Combo {idx}/{total_combinations}"):
                 symbol = futures[future]
@@ -246,9 +251,10 @@ def optimize_parameters(symbols, start_date, end_date, optimization_params):
                 except Exception as exc:
                     print(f"{symbol} generated an exception during optimization: {exc}")
 
-        # Aggregate metrics for this parameter combination
         if temp_results:
             temp_df = pd.DataFrame(temp_results)
+            all_individual_results.append(temp_df)
+
             agg_metrics = {
                 'Buy Threshold (%)': buy_threshold,
                 'Decay Days': decay_days,
@@ -264,7 +270,18 @@ def optimize_parameters(symbols, start_date, end_date, optimization_params):
             print(f"No results for Buy Threshold={buy_threshold}%, Decay Days={decay_days}")
 
     optimization_results = pd.DataFrame(results)
-    return optimization_results
+
+    # Save individual results
+    if all_individual_results:
+        all_individual_results_df = pd.concat(all_individual_results, ignore_index=True)
+        individual_results_file = os.path.join(output_dir, 'optimization_individual_results.xlsx')
+        all_individual_results_df.to_excel(individual_results_file, index=False)
+        print(f"Individual optimization results saved to {individual_results_file}")
+    else:
+        all_individual_results_df = pd.DataFrame()
+        print("No individual optimization results to save.")
+
+    return optimization_results, all_individual_results_df
 
 
 def main():
@@ -276,7 +293,7 @@ def main():
     end_date = '2024-10-11'  # Adjusted to the latest available date
 
     # Initialize DataLoader
-    global data_loader  # Declare as global for use in other functions
+    # global data_loader  # Declare as global for use in other functions
     data_loader = DataLoader(dataset_dir='dataset')
 
     # Load unique symbols
@@ -300,7 +317,7 @@ def main():
     os.makedirs(charts_dir, exist_ok=True)
 
     # Define adjustable parameters
-    global initial_capital, buy_percentage, sell_percentage  # Declare as global for use in other functions
+    # global initial_capital, buy_percentage, sell_percentage  # Declare as global for use in other functions
     initial_capital = 50000000  # or any value you want
     buy_percentage = 0.2        # 20% of available cash
     sell_percentage = 0.4       # 40% of the position
@@ -382,11 +399,15 @@ def main():
 
     print("Starting parameter optimization...")
 
-    optimization_results = optimize_parameters(
+    optimization_results, all_individual_results_df = optimize_parameters(
         symbols=unique_symbols,
         start_date=start_date,
         end_date=end_date,
-        optimization_params=optimization_params
+        optimization_params=optimization_params,
+        initial_capital=initial_capital,
+        buy_percentage=buy_percentage,
+        sell_percentage=sell_percentage,
+        output_dir=output_dir
     )
 
     # Save optimization results

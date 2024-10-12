@@ -244,3 +244,26 @@
 2024-10-11 22:07:06,257 - INFO - No trades executed for symbol MSTZ. Skipping plot.
 2024-10-11 22:09:39,768 - INFO - No trades executed for symbol MSTU. Skipping plot.
 2024-10-11 22:10:05,312 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:33:36,995 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:33:44,512 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-12 10:35:15,116 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:36:09,705 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:39:47,443 - WARNING - Locator attempting to generate 12039 ticks ([18570.625, ..., 20075.375]), which exceeds Locator.MAXTICKS (1000).
+2024-10-12 10:45:41,522 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:45:57,088 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:46:06,154 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:47:04,480 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:47:19,709 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:47:29,307 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:48:26,592 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:48:42,283 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:48:51,388 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:49:47,901 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:50:03,257 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:50:12,824 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:51:09,555 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:51:24,790 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:51:34,516 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-12 10:52:31,993 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-12 10:52:47,054 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-12 10:52:55,829 - INFO - No trades executed for symbol MSTU. Skipping plot.
