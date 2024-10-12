@@ -116,23 +116,36 @@ def plot_cumulative_returns(portfolio_df, symbol, strategy, output_dir):
             os.remove(plot_path)
 
 
-def compile_charts_to_pdf(charts_dir, output_pdf_path):
+def compile_charts_to_pdf(charts_dir, output_pdf_path, min_file_size_kb=20):
     """
-    Compile all PNG charts in a directory into a single PDF file.
+    Compile all PNG charts in a directory into a single PDF file, excluding files smaller than a specified size.
 
     Parameters:
     - charts_dir (str): Directory containing PNG chart files.
     - output_pdf_path (str): Path to save the compiled PDF.
+    - min_file_size_kb (int): Minimum file size in kilobytes to include in the PDF.
     """
+    # Convert kilobytes to bytes
+    min_file_size_bytes = min_file_size_kb * 1024
+
     # Collect all PNG files in the charts directory
-    png_files = [os.path.join(charts_dir, f) for f in os.listdir(charts_dir) if f.lower().endswith('.png')]
+    png_files = [
+        os.path.join(charts_dir, f)
+        for f in os.listdir(charts_dir)
+        if f.lower().endswith('.png')
+    ]
+
+    # Filter out files smaller than the minimum file size
+    valid_png_files = [
+        f for f in png_files if os.path.getsize(f) >= min_file_size_bytes
+    ]
 
     # Sort the files for organized PDF
-    png_files.sort()
+    valid_png_files.sort()
 
     # Initialize PdfPages object
     with PdfPages(output_pdf_path) as pdf:
-        for png_file in tqdm(png_files, desc="Compiling charts into PDF"):
+        for png_file in tqdm(valid_png_files, desc="Compiling charts into PDF"):
             try:
                 img = plt.imread(png_file)
                 plt.figure(figsize=(14, 7))
@@ -142,3 +155,4 @@ def compile_charts_to_pdf(charts_dir, output_pdf_path):
                 plt.close()
             except Exception as e:
                 print(f"Error adding {png_file} to PDF: {e}")
+

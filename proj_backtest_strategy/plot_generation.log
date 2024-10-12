@@ -212,3 +212,35 @@
 2024-10-11 15:54:38,641 - INFO - No trades executed for symbol MSTZ. Skipping plot.
 2024-10-11 15:58:35,087 - INFO - No trades executed for symbol MSTU. Skipping plot.
 2024-10-11 15:59:31,035 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 20:42:10,799 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 20:42:41,596 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 20:45:52,411 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 20:47:41,195 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 20:50:51,796 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 20:51:25,418 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 21:23:36,938 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 21:27:17,679 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 21:27:51,952 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 21:33:56,654 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 21:36:56,385 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 21:37:27,847 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 21:43:02,442 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 21:46:30,813 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 21:47:03,264 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 21:50:32,535 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:34,223 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:34,717 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:35,126 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:36,113 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:36,375 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:36,554 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:50:36,594 - WARNING - Locator attempting to generate 21771 ticks ([17409.375, ..., 20130.625]), which exceeds Locator.MAXTICKS (1000).
+2024-10-11 21:52:16,096 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 21:54:56,101 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 21:55:21,451 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 21:59:46,625 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 22:02:21,555 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 22:02:47,290 - INFO - No trades executed for symbol PTIR. Skipping plot.
+2024-10-11 22:07:06,257 - INFO - No trades executed for symbol MSTZ. Skipping plot.
+2024-10-11 22:09:39,768 - INFO - No trades executed for symbol MSTU. Skipping plot.
+2024-10-11 22:10:05,312 - INFO - No trades executed for symbol PTIR. Skipping plot.

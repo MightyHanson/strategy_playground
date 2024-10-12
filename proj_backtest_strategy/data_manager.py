@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from ratelimiter import RateLimiter
 
 # ================================ Configuration and Constants ================================
 
@@ -474,8 +475,9 @@ def download_historical_data_fmp(symbols, conn, output_dir, api_key=FMP_API_KEY)
         api_key (str): Your Financial Modeling Prep API key.
     """
     monitor_csv_path = os.path.join(output_dir, HISTORICAL_MONITOR_CSV_FILE)
+    rate_limiter = RateLimiter(max_calls=300, period=60)  # 300 requests per 60 seconds
+    session = requests.Session()
 
-    # Open the CSV file once and keep it open during the entire download process
     with open(monitor_csv_path, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Symbol', 'Status', 'Records Downloaded'])
@@ -484,65 +486,51 @@ def download_historical_data_fmp(symbols, conn, output_dir, api_key=FMP_API_KEY)
             try:
                 print(f"Fetching data for {symbol}...")
 
-                # Determine the start date for fetching data
                 latest_date = get_latest_date(conn, symbol)
                 if latest_date:
-                    # Fetch data starting from the day after the latest date
                     start_date_dt = datetime.strptime(latest_date, '%Y-%m-%d') + timedelta(days=1)
                     start_date = start_date_dt.strftime('%Y-%m-%d')
                     print(f"Latest date in DB for {symbol}: {latest_date}. Fetching data from {start_date} onwards.")
                 else:
-                    # If no data exists, start from the predefined start date
                     start_date = HISTORICAL_DATA_START_DATE
                     print(f"No existing data for {symbol}. Fetching data from {start_date}.")
 
-                # Construct the API URL for historical data
-                historical_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&to={HISTORICAL_DATA_END_DATE}&apikey={api_key}'
-                response = requests.get(historical_url)
+                historical_url = (
+                    f'https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}'
+                    f'?from={start_date}&to={HISTORICAL_DATA_END_DATE}&apikey={api_key}'
+                )
+
+                # Rate limiting
+                rate_limiter.wait()
+
+                response = session.get(historical_url)
                 response.raise_for_status()
                 data = response.json()
 
                 if 'historical' not in data:
-                    # Handle cases where the response doesn't contain historical data
-                    if "Error Message" in data:
-                        status = f"Error: {data['Error Message']}"
-                    elif "Note" in data:
-                        status = f"Error: {data['Note']}"
-                    else:
-                        status = "Error: Unexpected response format"
+                    status = "Error: Unexpected response format"
                     print(f"{symbol}: {status}")
-                    records = 0
-                    writer.writerow([symbol, status, records])
+                    writer.writerow([symbol, status, 0])
                     continue
 
                 historical_data = data['historical']
                 if not historical_data:
-                    print(
-                        f"No new historical data available for {symbol} between {start_date} and {HISTORICAL_DATA_END_DATE}.")
+                    print(f"No new historical data available for {symbol}.")
                     status = 'No Data'
-                    records = 0
-                    writer.writerow([symbol, status, records])
+                    writer.writerow([symbol, status, 0])
                     continue
 
-                # Convert the historical data into a DataFrame
                 df = pd.DataFrame(historical_data)
                 df['symbol'] = symbol
                 df = df[['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']]
 
-                # Clean the data by ensuring numeric types
-                df['open'] = pd.to_numeric(df['open'], errors='coerce')
-                df['high'] = pd.to_numeric(df['high'], errors='coerce')
-                df['low'] = pd.to_numeric(df['low'], errors='coerce')
-                df['close'] = pd.to_numeric(df['close'], errors='coerce')
-                df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
                 records = len(df)
-
-                # Insert the new data into the database, ignoring duplicates
                 insert_data_with_ignore(conn, df)
                 print(f"Successfully inserted {records} new records for {symbol}.")
                 status = 'Success'
-
                 writer.writerow([symbol, status, records])
 
             except Exception as e:

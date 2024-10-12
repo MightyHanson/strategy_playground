@@ -10,7 +10,6 @@ from itertools import product
 from tqdm import tqdm  # For progress bars
 from visualization import plot_cumulative_returns, compile_charts_to_pdf
 from benchmark import Benchmark  # Added import for Benchmark class
-import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def backtest_strategy(symbol, benchmark_symbol, data_loader, start_date, end_date,
@@ -108,30 +107,29 @@ def backtest_strategy(symbol, benchmark_symbol, data_loader, start_date, end_dat
                             f"Bought {num_shares_to_buy} shares of {symbol} on {date} at {close_price}, total cost {cost}.")
                     else:
                         print(f"Insufficient funds to buy shares of {symbol} on {date}.")
+                else:
+                    print(f"No cash available to buy shares of {symbol} on {date}.")
             # Sell Signal
             elif row['Sell']:
                 # Debug statement
-                print(f"Sell signal on {date} for symbol {symbol}. Position before sell: {position} shares.")
-
+                # print(f"Sell signal on {date} for symbol {symbol}. Position before sell: {position} shares.")
                 if position > 0:
-                    num_shares_to_sell = position * sell_percentage
-                    num_shares_to_sell = int(num_shares_to_sell)
-                    if num_shares_to_sell > 0:
-                        proceeds = num_shares_to_sell * close_price
-                        cash += proceeds
-                        position -= num_shares_to_sell
-                        trade_log.append({
-                            'date': date,
-                            'action': 'sell',
-                            'price': close_price,
-                            'shares': num_shares_to_sell,
-                            'cash': cash,
-                            'position': position
-                        })
-                        print(
-                            f"Sold {num_shares_to_sell} shares of {symbol} on {date} at {close_price}, proceeds {proceeds}.")
-                    else:
-                        print(f"No shares to sell for {symbol} on {date}.")
+                    num_shares_to_sell = int(position * sell_percentage)
+                    if num_shares_to_sell <= 0:
+                        num_shares_to_sell = position  # Sell all remaining shares if calculated shares to sell is less than or equal to zero
+                    proceeds = num_shares_to_sell * close_price
+                    cash += proceeds
+                    position -= num_shares_to_sell
+                    trade_log.append({
+                        'date': date,
+                        'action': 'sell',
+                        'price': close_price,
+                        'shares': num_shares_to_sell,
+                        'cash': cash,
+                        'position': position
+                    })
+                    print(
+                        f"Sold {num_shares_to_sell} shares of {symbol} on {date} at {close_price}, proceeds {proceeds}.")
                 else:
                     print(f"No position to sell for {symbol} on {date}.")
 
@@ -269,24 +267,13 @@ def optimize_parameters(symbols, start_date, end_date, optimization_params):
     return optimization_results
 
 
-def generate_pdf_report(charts_dir, output_pdf_path):
-    """
-    Generate a PDF report compiling all charts.
-
-    Parameters:
-    - charts_dir (str): Directory containing PNG chart files.
-    - output_pdf_path (str): Path to save the compiled PDF.
-    """
-    compile_charts_to_pdf(charts_dir, output_pdf_path)
-
-
 def main():
     """
     Orchestrate the entire backtesting and optimization process.
     """
     # Define backtest period
     start_date = '2018-01-01'
-    end_date = '2024-10-10'  # Adjusted to the latest available date
+    end_date = '2024-10-11'  # Adjusted to the latest available date
 
     # Initialize DataLoader
     global data_loader  # Declare as global for use in other functions
@@ -315,7 +302,7 @@ def main():
     # Define adjustable parameters
     global initial_capital, buy_percentage, sell_percentage  # Declare as global for use in other functions
     initial_capital = 50000000  # or any value you want
-    buy_percentage = 0.1        # 10% of available cash
+    buy_percentage = 0.2        # 20% of available cash
     sell_percentage = 0.4       # 40% of the position
 
     # Initialize results list for individual backtests
@@ -412,7 +399,7 @@ def main():
     # Generate PDF report compiling all charts
     output_pdf_path = os.path.join(output_dir, 'backtest_report.pdf')
     print(f"Generating PDF report at {output_pdf_path}")
-    generate_pdf_report(charts_dir, output_pdf_path)
+    compile_charts_to_pdf(charts_dir, output_pdf_path, min_file_size_kb=20)
     print("PDF report generation completed.")
 
 
