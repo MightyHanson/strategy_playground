@@ -66,16 +66,6 @@ def save_evaluation_results(output_dir, evaluation_results):
     plt.close()
     logging.info(f"Saved Actual vs. Predicted plot to {scatter_plot_path}")
 
-    # Generate and save a residual plot
-    # plt.figure(figsize=(10, 6))
-    # sns.residplot(x='Actual', y='Predicted', data=evaluation_results['predictions'], lowess=True, line_kws={'color': 'red'})
-    # plt.title('Residuals of Predictions')
-    # plt.xlabel('Actual Close Price')
-    # plt.ylabel('Residuals')
-    # residual_plot_path = os.path.join(eval_dir, 'residuals.png')
-    # plt.savefig(residual_plot_path)
-    # plt.close()
-    # logging.info(f"Saved residuals plot to {residual_plot_path}")
 
 def main():
     """
@@ -92,7 +82,7 @@ def main():
     logging.info("Starting the portfolio management process.")
 
     # Step 3: Data Fetching and Storage
-    # main_data_fetching(output_dir)
+    main_data_fetching(output_dir)
 
     # Step 4: Initialize DataLoader
     data_loader = DataLoader(output_dir)
@@ -176,7 +166,6 @@ def main():
     save_evaluation_results(output_dir, evaluation_results)
 
     # Step 13: Generate Predictions for Portfolio Optimization
-    # Initialize predictions dictionary
     predictions_dict = {}
     # symbols_loaded = data_loader.load_symbols()
 
