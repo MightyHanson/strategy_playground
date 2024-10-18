@@ -1,0 +1,3 @@
+*.db
+.env
+dataset/historical_data.db
