@@ -17,7 +17,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # ================================ Configuration and Constants ================================
 load_dotenv()  # Load environment variables from .env file
 
-FMP_API_KEY = os.getenv("FMP_API_KEY")  # Financial Modeling Prep API Key
+FMP_API_KEY = os.getenv("NEW_FMP_API_KEY")  # Financial Modeling Prep API Key
 BENCHMARK_INDICES = ['^VIX']  # List of benchmark indices to include
 ETF_VOLUME_THRESHOLD = 200000  # Minimum average daily volume for ETFs
 HISTORICAL_DATA_START_DATE = '1994-10-09'  # Start date for historical data (up to ~30 years)

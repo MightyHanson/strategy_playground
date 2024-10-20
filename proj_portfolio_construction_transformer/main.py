@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 from utils import setup_logging
 import logging
-
+from backtest import backtest_portfolio, calculate_performance_metrics
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -82,7 +82,7 @@ def main():
     logging.info("Starting the portfolio management process.")
 
     # Step 3: Data Fetching and Storage
-    main_data_fetching(output_dir)
+    # main_data_fetching(output_dir)
 
     # Step 4: Initialize DataLoader
     data_loader = DataLoader(output_dir)
@@ -99,6 +99,8 @@ def main():
     min_start_date = pd.to_datetime('2006-01-03')
     symbol_start_dates = pd.to_datetime(combined_df.groupby('symbol')['date'].min())
     valid_symbols = symbol_start_dates[symbol_start_dates <= min_start_date].index.tolist()
+    list_to_exclude = ['FERG', '^VIX','CCEP.AS']
+    valid_symbols = [symbol for symbol in valid_symbols if symbol not in list_to_exclude]
     combined_df = combined_df[combined_df['symbol'].isin(valid_symbols)]
     combined_df = combined_df[pd.to_datetime(combined_df['date']) >= min_start_date]
     # Create the filename using the min_start_date
@@ -110,6 +112,10 @@ def main():
     symbols_df.to_excel(output_dir + '/' + filename, index=False, sheet_name=f'symbols_{date_str}')
     logging.info(f"Saved filtered symbols to {output_dir}")
 
+    # risk free data loaded
+    df_rf = data_loader.load_risk_free_rate()
+    df_rf_3M = df_rf['DGS3MO']
+    logging.info(f"Risk Free Data Loaded")
 
     # Step 6: Preprocess Data
     X, y, scaler, expected_returns, cov_matrix = preprocess_data(combined_df, data_loader)
@@ -144,13 +150,14 @@ def main():
     print(f'Using device: {device}')
     logging.info(f'Using device: {device}')
 
+    num_epoch = 1
     model = TransformerTimeSeries(feature_size=5, num_layers=2, dropout=0.1, nhead=1, dim_feedforward=128) # 128 for dim_feedforward test
     model.to(device)  # Move model to device
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     logging.info("Starting model training...")
-    train_model(model, train_loader, criterion, optimizer, num_epochs=1, device=device)
+    train_model(model, train_loader, criterion, optimizer, num_epochs=num_epoch, device=device)
     logging.info("Model training completed.")
 
     # Step 10: Evaluate the Model
@@ -204,6 +211,126 @@ def main():
     portfolio_excel_path = os.path.join(output_dir, 'optimized_portfolio.xlsx')
     optimized_weights.to_excel(portfolio_excel_path, header=['Weight'])
     logging.info(f"Optimized portfolio saved to {portfolio_excel_path}")
+
+    # Step 16: Backtesting
+    logging.info("Starting backtesting of the optimized portfolio.")
+    # Static Weight Backtest
+    # Prepare the daily risk-free rate series
+    df_rf_3M.index = pd.to_datetime(df_rf_3M.index)
+    df_rf_3M.sort_index(inplace=True)
+    df_rf_3M = df_rf_3M / 100  # Convert to decimal
+    days_in_year = 252
+    df_rf_daily = (1 + df_rf_3M) ** (1 / days_in_year) - 1
+
+    logging.info("Starting static weight backtesting of the optimized portfolio.")
+
+    # Define the backtest period
+    latest_data_date = pd.to_datetime(combined_df['date']).max()
+    optimization_date = latest_data_date - pd.DateOffset(years=1)
+    backtest_start_date = optimization_date + pd.Timedelta(days=1)
+    backtest_end_date = latest_data_date
+
+    # Fetch price data for the backtest period
+    price_data = data_loader.get_price_data(
+        symbols=optimized_weights.index.tolist(),
+        start_date=backtest_start_date,
+        end_date=backtest_end_date
+    )
+
+    # Ensure price_data is available
+    if price_data is None or price_data.empty:
+        logging.error("No price data available for the static backtest period.")
+    else:
+        # Calculate daily returns
+        daily_returns = price_data.pct_change().dropna()
+
+        # Align data
+        common_assets = daily_returns.columns.intersection(optimized_weights.index)
+        daily_returns = daily_returns[common_assets]
+        weights = optimized_weights.loc[common_assets]
+
+        # Calculate portfolio daily returns
+        daily_portfolio_returns = daily_returns.dot(weights)
+
+        # Calculate cumulative portfolio value
+        initial_portfolio_value = 1000000  # Starting portfolio value
+        cumulative_returns = (1 + daily_portfolio_returns).cumprod()
+        portfolio_values = initial_portfolio_value * cumulative_returns
+
+        # Calculate performance metrics
+        performance_metrics = calculate_performance_metrics(daily_portfolio_returns, df_rf_daily)
+
+        # Save results
+        static_backtest_results = pd.DataFrame({
+            'Portfolio Value': portfolio_values,
+            'Portfolio Returns': daily_portfolio_returns
+        })
+        static_backtest_results.to_csv(os.path.join(output_dir, 'backtest_results_static_weights.csv'))
+        logging.info("Static weight backtesting completed and results saved.")
+
+        # Log performance metrics
+        logging.info(f"Static Backtest Sharpe Ratio: {performance_metrics['Sharpe Ratio']:.4f}")
+        logging.info(f"Static Backtest Max Drawdown: {performance_metrics['Max Drawdown']:.4%}")
+
+    # Dynamic Weight Backtest
+    # Define backtesting parameters
+    logging.info("Starting Dynamic weight backtesting of the optimized portfolio.")
+
+    start_date = min_start_date + pd.DateOffset(months = 2)
+    end_date = pd.to_datetime('2024-09-30')
+    rebalance_frequency = 'M'  # Monthly rebalancing
+
+    # Backtest the portfolio
+    try:
+        backtest_results, weights_df = backtest_portfolio(
+            data_loader=data_loader,
+            symbols=valid_symbols,
+            risk_free_rate_series=df_rf_daily,
+            start_date=start_date,
+            end_date=end_date,
+            rebalance_frequency=rebalance_frequency,
+            model_params={
+                'feature_size': 5,
+                'num_layers': 2,
+                'dropout': 0.1,
+                'nhead': 1,
+                'dim_feedforward': 128,
+            },
+            initial_portfolio_value=1000000,
+            seq_length=30,
+            num_epochs=num_epoch,
+            device=device
+        )
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during backtesting: {e}")
+        sys.exit(1)
+
+    # Save backtesting results
+    if backtest_results is not None:
+        backtest_results.to_csv(os.path.join(output_dir, 'backtest_results_dynamic_weights.csv'))
+        logging.info("Backtesting completed and results saved.")
+    else:
+        logging.error("Backtesting failed. No results to save.")
+
+    # Save dynamic weights to Excel
+    if weights_df is not None and not weights_df.empty:
+        weights_excel_path = os.path.join(output_dir, 'dynamic_portfolio_weights.xlsx')
+        with pd.ExcelWriter(weights_excel_path, engine='openpyxl') as writer:
+            weights_df.to_excel(writer, sheet_name='Weights')
+
+            # Optionally, format the Excel sheet for better readability
+            workbook = writer.book
+            worksheet = writer.sheets['Weights']
+            for column_cells in worksheet.columns:
+                length = max(len(str(cell.value)) for cell in column_cells)
+                column_letter = column_cells[0].column_letter
+                worksheet.column_dimensions[column_letter].width = length + 2
+                for cell in column_cells[1:]:
+                    cell.number_format = '0.00%'  # Format weights as percentages
+
+        logging.info(f"Dynamic portfolio weights saved to {weights_excel_path}")
+    else:
+        logging.error("No dynamic weights to save.")
 
     logging.info("Portfolio management process completed successfully.")
 
