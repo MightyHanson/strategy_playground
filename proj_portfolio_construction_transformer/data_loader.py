@@ -53,6 +53,21 @@ class DataLoader:
             print(f"Error loading symbols from Excel: {e}")
             return []
 
+    def load_risk_free_rate(self):
+        risk_free_rate_path = os.path.join(self.dataset_dir, 'yield_data_df.xlsx')
+        if not os.path.exists(risk_free_rate_path):
+            print(f"Error: {risk_free_rate_path} does not exist.")
+            return []
+        try:
+            xls = pd.ExcelFile(risk_free_rate_path)
+            df_risk_free = xls.parse('Sheet1').dropna()
+            df_risk_free['date'] = pd.to_datetime(df_risk_free['date'])
+            df_risk_free.set_index('date',inplace = True)
+            return df_risk_free
+        except Exception as e:
+            print(f"Error loading symbols from Excel: {e}")
+            return []
+
     def load_benchmark_configurations(self):
         """
         Load benchmark configurations from the configuration file.
@@ -85,3 +100,54 @@ class DataLoader:
         except Exception as e:
             print(f"Error loading benchmark configurations: {e}")
             return {}
+
+    def get_historical_data(self, symbols, end_date):
+        """
+        Fetch historical data for the given symbols up to the end_date.
+
+        Args:
+            symbols (list): List of symbols.
+            end_date (pd.Timestamp): End date for the data.
+
+        Returns:
+            pd.DataFrame: Combined DataFrame of historical data.
+        """
+        all_data = []
+        for symbol in symbols:
+            df = self.load_data(symbol)
+            df['date'] = pd.to_datetime(df['date'])
+            if df is not None:
+                df = df[df['date'] <= end_date]
+                all_data.append(df)
+        if not all_data:
+            return None
+        combined_df = pd.concat(all_data, ignore_index=True)
+        return combined_df
+
+    def get_price_data(self, symbols, start_date, end_date):
+        """
+        Fetch price data for the given symbols between start_date and end_date.
+
+        Args:
+            symbols (list): List of symbols.
+            start_date (pd.Timestamp): Start date for the data.
+            end_date (pd.Timestamp): End date for the data.
+
+        Returns:
+            pd.DataFrame: DataFrame of price data with dates as index and symbols as columns.
+        """
+        all_data = []
+        for symbol in symbols:
+            df = self.load_data(symbol)
+            if df is not None:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+                df = df[['date', 'close']]
+                df.set_index('date', inplace=True)
+                df.rename(columns={'close': symbol}, inplace=True)
+                all_data.append(df)
+        if not all_data:
+            return None
+        price_data = pd.concat(all_data, axis=1)
+        price_data.sort_index(inplace=True)
+        return price_data

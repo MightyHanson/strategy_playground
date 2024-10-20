@@ -227,6 +227,7 @@ def main():
     # Fill missing values using forward fill method
     yield_data.fillna(method='ffill', inplace=True)
     yield_data.to_excel(os.path.join(output_dir, 'yield_data.xlsx'), index=False)
+    yield_data.to_excel(os.path.join(output_dir, 'yield_data_df.xlsx'), index=True)
 
     # Bootstrap the zero curve with continuous compounding
     zero_curve_continuous = bootstrap_zero_curve_continuous(yield_data, series_key_list)
