@@ -10,7 +10,6 @@ from model import TransformerTimeSeries, train_model, evaluate_model
 from predict import predict_future
 from optimizer import optimize_portfolio
 import torch
-from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 from utils import setup_logging
 import logging
@@ -191,13 +190,6 @@ def main():
     # Convert predictions to a Series
     predicted_returns_series = pd.Series(predictions_dict)
     logging.info(f"Generated predictions for {len(predicted_returns_series)} symbols.")
-
-    # Select top N assets based on predicted returns
-    # N = 500
-    # if len(predicted_returns_series) > N:
-    #     top_assets = predicted_returns_series.nlargest(N).index
-    #     predicted_returns_series = predicted_returns_series.loc[top_assets]
-    #     cov_matrix = cov_matrix.loc[top_assets, top_assets]
 
     # Step 14: Portfolio Optimization
     optimized_weights = optimize_portfolio(
